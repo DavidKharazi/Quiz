@@ -52,6 +52,10 @@ button.danger{background:#e74c3c;color:#fff}
 .gain{color:#7dffa8;font-size:14px}
 .hint{opacity:.75;font-size:14px}
 .err{color:#ffd0d0;min-height:1em;text-align:center}
+.qr{background:#fff;border-radius:16px;padding:10px;width:220px;max-width:70vw;margin:0 auto;cursor:zoom-in;line-height:0}
+.qr svg{width:100%;height:auto;display:block}
+.qr-full{position:fixed;inset:0;background:rgba(20,8,45,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:10;cursor:zoom-out;padding:16px}
+.qr-full .qr{width:min(80vw,80vh);max-width:none;cursor:zoom-out}
 hr{border:0;border-top:1px solid rgba(255,255,255,.25);width:100%}
 </style>
 </head>
@@ -92,6 +96,32 @@ let unsubs = [], timerId = null;
 const clearSubs = () => { unsubs.forEach(u => u()); unsubs = []; };
 const sub = (path, cb) => unsubs.push(onValue(ref(db, path), s => cb(s.val())));
 const clearTimer = () => { if (timerId) { clearInterval(timerId); timerId = null; } };
+// ---------- QR-код ----------
+let qrLib = null; const qrCache = {};
+const loadQr = () => qrLib || (qrLib = new Promise((ok, fail) => {
+  const sc = document.createElement('script');
+  sc.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+  sc.onload = () => window.qrcode ? ok(window.qrcode) : fail();
+  sc.onerror = () => { qrLib = null; fail(); };
+  document.head.appendChild(sc);
+}));
+const qrSvg = text => { if (!qrCache[text]) { const q = window.qrcode(0, 'M'); q.addData(text); q.make(); qrCache[text] = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true, alt: 'QR-код для входа в игру' }); } return qrCache[text]; };
+function showQr(id, text, caption) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  loadQr().then(() => {
+    if (!el.isConnected) return;
+    el.innerHTML = qrSvg(text); el.hidden = false;
+    el.onclick = () => {
+      const ov = document.createElement('div');
+      ov.className = 'qr-full';
+      ov.innerHTML = `<div class="qr">${qrSvg(text)}</div><div class="code">${esc(caption)}</div><div class="hint">Нажмите, чтобы закрыть</div>`;
+      ov.onclick = () => ov.remove();
+      document.body.appendChild(ov);
+    };
+  }).catch(() => {});
+}
+
 // ---------- экран не гаснет, пока открыт экран ведущего ----------
 let wakeWanted = false, wakeLock = null;
 const canWake = 'wakeLock' in navigator;
@@ -367,7 +397,9 @@ function hostGame(code, qs) {
     if (pub.state === 'lobby') {
       $app.innerHTML = `<div class="wrap center">
         <div class="hint">Код комнаты</div><div class="code">${code}</div>
-        <div class="hint">Друзья заходят по ссылке:</div><div class="link">${esc(link)}</div>
+        <div class="hint">Друзья сканируют QR-код или заходят по ссылке:</div>
+        <div class="qr" id="qr" hidden title="Нажмите, чтобы увеличить"></div>
+        <div class="link">${esc(link)}</div>
         <button class="small secondary" id="share">Поделиться ссылкой</button>
         <h3>Игроки (${list.length})</h3>
         <div class="chips">${list.map(p => `<span class="chip">${esc(p.name)}</span>`).join('') || '<span class="hint">Пока никого…</span>'}</div>
@@ -381,6 +413,7 @@ function hostGame(code, qs) {
         try { if (navigator.share) await navigator.share({ title: 'Квиз', text: 'Код комнаты: ' + code, url: link }); else { await navigator.clipboard.writeText(link); alert('Ссылка скопирована'); } } catch {}
       });
       on('auto', 'input', e => { autoSec = Math.min(120, Math.max(0, Math.round(+e.target.value) || 0)); saveAuto(autoSec); });
+      showQr('qr', link, code);
       on('start', 'click', () => { advancedIdx = null; startQuestion(0); });
       on('close', 'click', closeRoom);
     } else if (pub.state === 'question') {
