@@ -63,7 +63,8 @@ hr{border:0;border-top:1px solid rgba(255,255,255,.25);width:100%}
 <div id="app"></div>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getDatabase, ref, set, get, update, onValue, remove, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { getDatabase, ref, set, get, update, onValue, remove, serverTimestamp, query, orderByChild, endAt, limitToFirst } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+import { getAuth, onAuthStateChanged, signInAnonymously, signInWithPopup, GoogleAuthProvider, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // ===== ВСТАВЬТЕ СЮДА КОНФИГ ИЗ FIREBASE =====
 const firebaseConfig = {
@@ -85,10 +86,46 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 const MEDALS = ['🥇', '🥈', '🥉'];
 
 const configured = !!(firebaseConfig && firebaseConfig.databaseURL);
-let db = null, offset = 0;
+let db = null, auth = null, offset = 0, authReady = Promise.resolve();
 if (configured) {
-  db = getDatabase(initializeApp(firebaseConfig));
+  const app = initializeApp(firebaseConfig);
+  db = getDatabase(app);
+  auth = getAuth(app);
+  authReady = new Promise(ok => { const u = onAuthStateChanged(auth, () => { u(); ok(); }); });
   onValue(ref(db, '.info/serverTimeOffset'), s => { offset = s.val() || 0; });
+}
+
+// ---------- вход ----------
+// Игроки входят анонимно (незаметно), ведущий — через Google.
+// Права ведущего есть только у аккаунтов, записанных в базе в узле hosts.
+const ensureUser = async () => {
+  await authReady;
+  if (!auth.currentUser) await signInAnonymously(auth);
+  return auth.currentUser.uid;
+};
+const isHost = async uid => { try { return (await get(ref(db, `hosts/${uid}`))).exists(); } catch { return false; } };
+async function hostLogin() {
+  await authReady;
+  let u = auth.currentUser;
+  if (!u || u.isAnonymous) {
+    try { u = (await signInWithPopup(auth, new GoogleAuthProvider())).user; }
+    catch (e) { if (e && /popup-closed|cancelled-popup/.test(e.code || '')) return false; throw e; }
+  }
+  if (await isHost(u.uid)) return true;
+  reset();
+  $app.innerHTML = `<div class="wrap"><div class="card">
+    <h2>Нет прав ведущего</h2>
+    <p>Вы вошли как ${esc(u.email || 'пользователь Google')}, но этот аккаунт не может создавать игры.</p>
+    <p class="hint">Если это ваш квиз: в консоли Firebase откройте Realtime Database → Данные, создайте узел <b>hosts</b> и внутри него запись с ключом ниже и значением <b>true</b>.</p>
+    <div class="link">${esc(u.uid)}</div>
+    <button class="secondary" id="copy">Скопировать ID</button>
+    <button class="secondary" id="out">Выйти из Google</button>
+    <button id="back">← Меню</button>
+  </div></div>`;
+  on('copy', 'click', async () => { try { await navigator.clipboard.writeText(u.uid); alert('Скопировано'); } catch {} });
+  on('out', 'click', async () => { await signOut(auth); home(); });
+  on('back', 'click', home);
+  return false;
 }
 const now = () => Date.now() + offset;
 
@@ -198,8 +235,9 @@ function home() {
   };
   on('join', 'click', doJoin);
   on('name', 'keydown', e => { if (e.key === 'Enter') doJoin(); });
-  on('host', 'click', editor);
+  on('host', 'click', async () => { try { if (await hostLogin()) editor(); } catch (e) { alert('Не удалось войти: ' + errText(e)); } });
   on('resume', 'click', async () => {
+    try { if (!await hostLogin()) return; } catch (e) { alert('Не удалось войти: ' + errText(e)); return; }
     const pub = (await get(ref(db, `rooms/${hs.code}/pub`))).val();
     if (!pub) { clearHost(); alert('Эта комната уже закрыта'); home(); return; }
     hostGame(hs.code, hs.qs);
@@ -306,7 +344,17 @@ function compile(qs) {
   });
 }
 
+async function cleanupOldRooms() {
+  try {
+    const old = await get(query(ref(db, 'rooms'), orderByChild('pub/createdAt'), endAt(now() - 24 * 3600e3), limitToFirst(50)));
+    const upd = {};
+    old.forEach(c => { upd[c.key] = null; });
+    if (Object.keys(upd).length) await update(ref(db, 'rooms'), upd);
+  } catch {}
+}
+
 async function createRoom(qs) {
+  cleanupOldRooms();
   let code;
   for (let k = 0; k < 20; k++) {
     code = String(Math.floor(1000 + Math.random() * 9000));
@@ -341,7 +389,7 @@ function hostGame(code, qs) {
   const startQuestion = i => {
     const q = qs[i];
     set(ref(db, `rooms/${code}/pub`), {
-      state: 'question', idx: i, total: qs.length, createdAt: pub.createdAt || serverTimestamp(),
+      state: 'question', idx: i, k: String(i), total: qs.length, createdAt: pub.createdAt || serverTimestamp(),
       q: { text: q.text, type: q.type, options: q.type === 'choice' ? q.options : null, time: q.time },
       startedAt: serverTimestamp()
     });
@@ -483,14 +531,11 @@ function hostGame(code, qs) {
 
 // ---------- игрок ----------
 async function join(code, name) {
+  const pid = await ensureUser();
   const pub = (await get(ref(db, `rooms/${code}/pub`))).val();
   if (!pub) throw 'Комната не найдена';
   localStorage.setItem('qz_name', name);
-  let pid = localStorage.getItem('qz_pid_' + code);
-  if (!pid) { pid = Math.random().toString(36).slice(2, 10); localStorage.setItem('qz_pid_' + code, pid); }
-  const pref = ref(db, `rooms/${code}/players/${pid}`);
-  const ex = (await get(pref)).val();
-  if (ex) await update(pref, { name }); else await set(pref, { name, score: 0 });
+  await set(ref(db, `rooms/${code}/players/${pid}/name`), name);
   history.replaceState(null, '', '?room=' + code);
   player(code, pid);
 }
@@ -542,7 +587,9 @@ function player(code, pid) {
       const answer = a => {
         if (myAns != null || expired) return;
         myAns = a;
-        set(ref(db, `rooms/${code}/answers/${pub.idx}/${pid}`), { a, ts: serverTimestamp() });
+        const idx = pub.idx;
+        set(ref(db, `rooms/${code}/answers/${idx}/${pid}`), { a, ts: serverTimestamp() })
+          .catch(() => { if (ansIdx === idx && pub.state === 'question') { myAns = null; expired = true; render(); } });
         render();
       };
       document.querySelectorAll('[data-j]').forEach(b => b.addEventListener('click', () => answer(+b.dataset.j)));

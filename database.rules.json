@@ -1,0 +1,42 @@
+{
+  "rules": {
+    "hosts": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid"
+      }
+    },
+    "rooms": {
+      ".read": "auth != null && root.child('hosts').child(auth.uid).val() === true",
+      ".indexOn": ["pub/createdAt"],
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('hosts').child(auth.uid).val() === true",
+        "players": {
+          "$pid": {
+            "name": {
+              ".write": "auth != null && auth.uid === $pid && root.child('rooms').child($code).child('pub').exists()",
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 20"
+            }
+          }
+        },
+        "answers": {
+          "$idx": {
+            "$pid": {
+              ".write": "auth != null && auth.uid === $pid && !data.exists() && newData.exists() && root.child('rooms').child($code).child('players').child($pid).child('name').exists() && root.child('rooms').child($code).child('pub').child('state').val() === 'question' && root.child('rooms').child($code).child('pub').child('k').val() === $idx && now <= root.child('rooms').child($code).child('pub').child('startedAt').val() + root.child('rooms').child($code).child('pub').child('q').child('time').val() * 1000 + 1500",
+              ".validate": "newData.hasChildren(['a', 'ts'])",
+              "a": {
+                ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 3) || (newData.isString() && newData.val().length <= 100)"
+              },
+              "ts": {
+                ".validate": "newData.val() === now"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
