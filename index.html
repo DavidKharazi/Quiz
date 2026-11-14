@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Квиз</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(160deg,#2b1055,#7597de) fixed;color:#fff;min-height:100vh}
+.wrap{max-width:720px;margin:0 auto;padding:16px 16px 40px;display:flex;flex-direction:column;gap:12px}
+.center{text-align:center}
+.card{background:rgba(255,255,255,.12);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:10px}
+h1,h2,h3{margin:.2em 0}
+.logo{font-size:44px;letter-spacing:1px;text-align:center}
+input,textarea,select{width:100%;font-size:17px;padding:12px;border-radius:12px;border:0;background:#fff;color:#222;font-family:inherit}
+input[type=radio]{width:24px;height:24px;flex:none;margin:0}
+textarea{resize:vertical}
+button{font-size:17px;padding:12px 16px;border-radius:12px;border:0;background:#fff;color:#2b1055;font-weight:600;cursor:pointer;font-family:inherit}
+button.big{font-size:20px;padding:16px;background:#ffcc00;color:#2b1055}
+button.secondary{background:rgba(255,255,255,.2);color:#fff}
+button.small{font-size:14px;padding:8px 12px}
+button.danger{background:#e74c3c;color:#fff}
+.row{display:flex;gap:8px;align-items:center}
+.between{justify-content:space-between}
+.nowrap{white-space:nowrap}
+.num{width:80px}
+.letter{display:inline-flex;width:32px;height:32px;border-radius:8px;align-items:center;justify-content:center;font-weight:800;flex:none;color:#fff}
+.l0{background:#e74c3c}.l1{background:#3498db}.l2{background:#e6a800}.l3{background:#27ae60}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:480px){.opts{grid-template-columns:1fr}}
+.opt-big{padding:18px 14px;border-radius:14px;font-size:19px;font-weight:700;color:#fff;text-align:left;min-height:76px;display:flex;align-items:center;gap:10px}
+.code{font-size:72px;font-weight:900;letter-spacing:8px}
+.link{word-break:break-all;background:rgba(0,0,0,.2);padding:8px;border-radius:8px;font-size:14px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+.chip{background:rgba(255,255,255,.2);padding:6px 12px;border-radius:20px}
+.bar{height:10px;background:rgba(255,255,255,.2);border-radius:5px;overflow:hidden}
+.bar>div{height:100%;background:#ffcc00;width:100%;transition:width .25s linear}
+.timer{font-size:28px;font-weight:800}
+.qtext{font-size:26px;text-align:center}
+.big-num{font-size:22px;text-align:center}
+.done{font-size:26px;font-weight:800;text-align:center;padding:30px 0}
+.res{font-size:34px;font-weight:900;padding:24px;border-radius:16px;text-align:center}
+.res.ok{background:#27ae60}.res.bad{background:#e74c3c}
+.correct{font-size:22px;font-weight:700;background:rgba(39,174,96,.9);padding:12px;border-radius:12px;text-align:center}
+.dist{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:rgba(0,0,0,.15)}
+.dist.ok{outline:3px solid #2ecc71}
+.dtext{flex:1}
+.lb{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:6px}
+.lb li{display:flex;gap:10px;background:rgba(0,0,0,.2);padding:10px 12px;border-radius:10px;align-items:center}
+.lb .nm{flex:1;text-align:left}
+.lb .me{outline:2px solid #ffcc00}
+.gain{color:#7dffa8;font-size:14px}
+.hint{opacity:.75;font-size:14px}
+.err{color:#ffd0d0;min-height:1em;text-align:center}
+hr{border:0;border-top:1px solid rgba(255,255,255,.25);width:100%}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, set, get, update, onValue, remove, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+// ===== ВСТАВЬТЕ СЮДА КОНФИГ ИЗ FIREBASE =====
+const firebaseConfig = {
+  apiKey: "AIzaSyA4tVwnSeJzIAVkFUBuPH0uRdmDm0CO_Kw",
+  authDomain: "quiz-9bfba.firebaseapp.com",
+  databaseURL: "https://quiz-9bfba-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "quiz-9bfba",
+  storageBucket: "quiz-9bfba.firebasestorage.app",
+  messagingSenderId: "465873545554",
+  appId: "1:465873545554:web:a2f093b0aa5f2b7932328b"
+};
+// ============================================
+
+const $app = document.getElementById('app');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s || '').toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const params = new URLSearchParams(location.search);
+const LETTERS = ['A', 'B', 'C', 'D'];
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+const configured = !!(firebaseConfig && firebaseConfig.databaseURL);
+let db = null, offset = 0;
+if (configured) {
+  db = getDatabase(initializeApp(firebaseConfig));
+  onValue(ref(db, '.info/serverTimeOffset'), s => { offset = s.val() || 0; });
+}
+const now = () => Date.now() + offset;
+
+let unsubs = [], timerId = null;
+const clearSubs = () => { unsubs.forEach(u => u()); unsubs = []; };
+const sub = (path, cb) => unsubs.push(onValue(ref(db, path), s => cb(s.val())));
+const clearTimer = () => { if (timerId) { clearInterval(timerId); timerId = null; } };
+const reset = () => { clearSubs(); clearTimer(); };
+const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+const errText = e => typeof e === 'string' ? e : (e && e.message) || 'Ошибка';
+
+// ---------- локальное хранилище ----------
+const blankQ = () => ({ text: '', type: 'choice', options: ['', '', '', ''], correct: 0, answers: '', time: 20 });
+const normalizeQ = q => {
+  const b = blankQ();
+  const o = Array.isArray(q.options) ? q.options.map(String) : [];
+  while (o.length < 4) o.push('');
+  return { ...b, ...q, options: o.slice(0, 4), type: q.type === 'text' ? 'text' : 'choice',
+    time: +q.time || 20, correct: +q.correct || 0, answers: String(q.answers || ''), text: String(q.text || '') };
+};
+const DEFAULT_QS = [
+  { text: 'Столица Австралии?', type: 'choice', options: ['Сидней', 'Канберра', 'Мельбурн', 'Перт'], correct: 1, answers: '', time: 20 },
+  { text: 'Сколько планет в Солнечной системе?', type: 'text', options: ['', '', '', ''], correct: 0, answers: '8; восемь', time: 20 }
+];
+const loadQs = () => { try { const v = JSON.parse(localStorage.getItem('qz_questions')); if (Array.isArray(v)) return v.map(normalizeQ); } catch {} return DEFAULT_QS.map(normalizeQ); };
+const saveQs = qs => localStorage.setItem('qz_questions', JSON.stringify(qs));
+const loadHost = () => { try { return JSON.parse(localStorage.getItem('qz_host')); } catch { return null; } };
+const saveHost = h => localStorage.setItem('qz_host', JSON.stringify(h));
+const clearHost = () => localStorage.removeItem('qz_host');
+
+function lbHtml(list, idx, results, meId, limit = 10) {
+  return `<ol class="lb">${list.slice(0, limit).map((p, i) => {
+    const r = idx != null && results && results[idx] && results[idx][p.id];
+    return `<li class="${p.id === meId ? 'me' : ''}"><b>${MEDALS[i] || i + 1}</b><span class="nm">${esc(p.name)}</span>${r && r.gained ? `<span class="gain">+${r.gained}</span>` : ''}<b>${p.score || 0}</b></li>`;
+  }).join('')}</ol>`;
+}
+const sortPlayers = players => Object.entries(players || {}).map(([id, p]) => ({ id, ...p })).sort((a, b) => (b.score || 0) - (a.score || 0));
+
+// ---------- главная ----------
+function home() {
+  reset();
+  if (!configured) {
+    $app.innerHTML = `<div class="wrap"><div class="card"><h2>Нужна настройка</h2><p>Вставьте firebaseConfig в начало файла index.html.</p></div></div>`;
+    return;
+  }
+  const hs = loadHost();
+  $app.innerHTML = `<div class="wrap">
+    <h1 class="logo">Квиз</h1>
+    <div class="card">
+      <input id="code" inputmode="numeric" maxlength="4" placeholder="Код комнаты" value="${esc(params.get('room') || '')}">
+      <input id="name" maxlength="20" placeholder="Ваше имя" value="${esc(localStorage.getItem('qz_name') || '')}">
+      <button id="join" class="big">Войти в игру</button>
+      <div class="err" id="err"></div>
+    </div>
+    <hr>
+    <button id="host" class="secondary">Я ведущий: создать игру</button>
+    ${hs && hs.code ? `<button id="resume" class="secondary">Вернуться к игре ${esc(hs.code)}</button>` : ''}
+  </div>`;
+  const doJoin = async () => {
+    const code = document.getElementById('code').value.replace(/\D/g, '');
+    const name = document.getElementById('name').value.trim();
+    const err = document.getElementById('err');
+    if (code.length !== 4) { err.textContent = 'Введите 4-значный код'; return; }
+    if (!name) { err.textContent = 'Введите имя'; return; }
+    try { await join(code, name); } catch (e) { err.textContent = errText(e); }
+  };
+  on('join', 'click', doJoin);
+  on('name', 'keydown', e => { if (e.key === 'Enter') doJoin(); });
+  on('host', 'click', editor);
+  on('resume', 'click', async () => {
+    const pub = (await get(ref(db, `rooms/${hs.code}/pub`))).val();
+    if (!pub) { clearHost(); alert('Эта комната уже закрыта'); home(); return; }
+    hostGame(hs.code, hs.qs);
+  });
+}
+
+// ---------- редактор вопросов ----------
+function editor() {
+  reset();
+  const qs = loadQs();
+  const draw = () => {
+    $app.innerHTML = `<div class="wrap">
+      <div class="row between"><h2>Вопросы (${qs.length})</h2><button class="small secondary" id="back">← Меню</button></div>
+      ${qs.map((q, i) => `
+      <div class="card q" data-i="${i}">
+        <div class="row between"><b>#${i + 1}</b>
+          <div class="row"><button class="small secondary" data-act="up">↑</button><button class="small secondary" data-act="down">↓</button><button class="small danger" data-act="del">✕</button></div>
+        </div>
+        <textarea data-f="text" rows="2" placeholder="Текст вопроса">${esc(q.text)}</textarea>
+        <div class="row">
+          <select data-f="type"><option value="choice"${q.type === 'choice' ? ' selected' : ''}>Варианты ответа</option><option value="text"${q.type === 'text' ? ' selected' : ''}>Ввод текста</option></select>
+          <label class="row nowrap">⏱ <input data-f="time" type="number" min="5" max="300" value="${q.time}" class="num"> сек</label>
+        </div>
+        ${q.type === 'choice'
+          ? q.options.map((o, j) => `<label class="row"><input type="radio" name="c${i}" data-f="correct" value="${j}"${q.correct === j ? ' checked' : ''}><span class="letter l${j}">${LETTERS[j]}</span><input data-f="opt" data-j="${j}" value="${esc(o)}" placeholder="Вариант ${LETTERS[j]}"></label>`).join('') + '<div class="hint">Кружком отметьте правильный вариант. Пустые варианты не показываются.</div>'
+          : `<input data-f="answers" value="${esc(q.answers)}" placeholder="Правильные ответы через ;"><div class="hint">Можно несколько ответов через «;». Регистр, ё/е и знаки препинания не важны.</div>`}
+      </div>`).join('')}
+      <button id="add" class="secondary">+ Добавить вопрос</button>
+      <button id="io" class="secondary">Импорт / экспорт</button>
+      <button id="create" class="big">Создать комнату</button>
+      <div class="err" id="err"></div>
+    </div>`;
+    document.querySelectorAll('.q').forEach(card => {
+      const i = +card.dataset.i;
+      card.addEventListener('input', e => {
+        const f = e.target.dataset.f, q = qs[i];
+        if (f === 'text') q.text = e.target.value;
+        else if (f === 'time') q.time = +e.target.value || 20;
+        else if (f === 'opt') q.options[+e.target.dataset.j] = e.target.value;
+        else if (f === 'answers') q.answers = e.target.value;
+        else if (f === 'correct') q.correct = +e.target.value;
+        saveQs(qs);
+      });
+      card.addEventListener('change', e => {
+        if (e.target.dataset.f === 'type') { qs[i].type = e.target.value; saveQs(qs); draw(); }
+        else if (e.target.dataset.f === 'correct') { qs[i].correct = +e.target.value; saveQs(qs); }
+      });
+      card.addEventListener('click', e => {
+        const a = e.target.dataset.act;
+        if (!a) return;
+        if (a === 'del') { if (!confirm('Удалить вопрос?')) return; qs.splice(i, 1); }
+        if (a === 'up' && i > 0) [qs[i - 1], qs[i]] = [qs[i], qs[i - 1]];
+        if (a === 'down' && i < qs.length - 1) [qs[i + 1], qs[i]] = [qs[i], qs[i + 1]];
+        saveQs(qs); draw();
+      });
+    });
+    on('back', 'click', home);
+    on('add', 'click', () => { qs.push(blankQ()); saveQs(qs); draw(); window.scrollTo(0, document.body.scrollHeight); });
+    on('io', 'click', () => ioScreen(qs));
+    on('create', 'click', async () => {
+      const err = document.getElementById('err');
+      try { const compiled = compile(qs); err.textContent = 'Создаю комнату…'; await createRoom(compiled); }
+      catch (e) { err.textContent = errText(e); }
+    });
+  };
+  draw();
+}
+
+function ioScreen(qs) {
+  $app.innerHTML = `<div class="wrap">
+    <h2>Импорт / экспорт</h2>
+    <p class="hint">Скопируйте текст, чтобы сохранить вопросы. Или вставьте свой список и нажмите «Применить».</p>
+    <textarea id="json" rows="16">${esc(JSON.stringify(qs, null, 1))}</textarea>
+    <button id="apply" class="big">Применить</button>
+    <button id="cancel" class="secondary">Назад</button>
+    <div class="err" id="err"></div>
+  </div>`;
+  on('cancel', 'click', editor);
+  on('apply', 'click', () => {
+    try {
+      const v = JSON.parse(document.getElementById('json').value);
+      if (!Array.isArray(v)) throw 'Нужен список вопросов [ ... ]';
+      saveQs(v.map(normalizeQ)); editor();
+    } catch (e) { document.getElementById('err').textContent = 'Не получилось прочитать: ' + errText(e); }
+  });
+}
+
+function compile(qs) {
+  if (!qs.length) throw 'Добавьте хотя бы один вопрос';
+  return qs.map((q, i) => {
+    const n = i + 1;
+    if (!q.text.trim()) throw `Вопрос ${n}: нет текста`;
+    const time = Math.min(300, Math.max(5, +q.time || 20));
+    if (q.type === 'choice') {
+      const opts = []; let correct = -1;
+      q.options.forEach((o, j) => { if (o.trim()) { if (j === q.correct) correct = opts.length; opts.push(o.trim()); } });
+      if (opts.length < 2) throw `Вопрос ${n}: нужно минимум 2 варианта`;
+      if (correct < 0) throw `Вопрос ${n}: отмеченный правильный вариант пустой`;
+      return { text: q.text.trim(), type: 'choice', options: opts, correct, time, correctText: opts[correct] };
+    }
+    const raw = q.answers.split(';').map(s => s.trim()).filter(Boolean);
+    if (!raw.length) throw `Вопрос ${n}: укажите правильный ответ`;
+    return { text: q.text.trim(), type: 'text', accepted: raw.map(norm), time, correctText: raw.join(' / ') };
+  });
+}
+
+async function createRoom(qs) {
+  let code;
+  for (let k = 0; k < 20; k++) {
+    code = String(Math.floor(1000 + Math.random() * 9000));
+    const ex = (await get(ref(db, `rooms/${code}/pub`))).val();
+    if (!ex || (ex.createdAt && now() - ex.createdAt > 12 * 3600e3)) break;
+  }
+  await set(ref(db, `rooms/${code}`), { pub: { state: 'lobby', total: qs.length, createdAt: serverTimestamp() } });
+  saveHost({ code, qs });
+  hostGame(code, qs);
+}
+
+// ---------- ведущий ----------
+function hostGame(code, qs) {
+  reset();
+  let pub = null, players = {}, answers = {}, results = {}, revealedIdx = null;
+  const link = location.origin + location.pathname + '?room=' + code;
+  const playerCount = () => Object.keys(players).length;
+  const answeredCount = () => pub && pub.idx != null ? Object.keys(answers[pub.idx] || {}).filter(id => players[id]).length : 0;
+  const updCount = () => { const el = document.getElementById('cnt'); if (el) el.textContent = `Ответили: ${answeredCount()} из ${playerCount()}`; };
+
+  sub(`rooms/${code}/pub`, v => {
+    if (!v) { clearHost(); home(); return; }
+    pub = v;
+    if (v.state !== 'question') revealedIdx = v.idx ?? null;
+    render();
+  });
+  sub(`rooms/${code}/players`, v => { players = v || {}; if (pub && pub.state === 'question') updCount(); else if (pub) render(); });
+  sub(`rooms/${code}/answers`, v => { answers = v || {}; if (pub && pub.state === 'question') updCount(); });
+  sub(`rooms/${code}/results`, v => { results = v || {}; if (pub && pub.state === 'reveal') render(); });
+
+  const startQuestion = i => {
+    const q = qs[i];
+    set(ref(db, `rooms/${code}/pub`), {
+      state: 'question', idx: i, total: qs.length, createdAt: pub.createdAt || serverTimestamp(),
+      q: { text: q.text, type: q.type, options: q.type === 'choice' ? q.options : null, time: q.time },
+      startedAt: serverTimestamp()
+    });
+  };
+
+  async function reveal() {
+    if (!pub || pub.state !== 'question' || revealedIdx === pub.idx) return;
+    const idx = pub.idx; revealedIdx = idx; clearTimer();
+    const q = qs[idx], ans = answers[idx] || {}, upd = {}, limit = q.time * 1000;
+    const dist = q.type === 'choice' ? q.options.map(() => 0) : null;
+    for (const [pid, p] of Object.entries(players)) {
+      const a = ans[pid]; let ok = false, gained = 0, shown = null;
+      if (a) {
+        if (q.type === 'choice') { ok = a.a === q.correct; if (dist[a.a] != null) dist[a.a]++; shown = q.options[a.a] ?? ''; }
+        else { ok = q.accepted.includes(norm(a.a)); shown = String(a.a).slice(0, 100); }
+        if (ok) { const el = Math.min(1, Math.max(0, ((a.ts || 0) - pub.startedAt) / limit)); gained = Math.round(1000 - 500 * el); }
+      }
+      upd[`players/${pid}/score`] = (p.score || 0) + gained;
+      upd[`results/${idx}/${pid}`] = { ok, gained, a: shown };
+    }
+    upd['pub/state'] = 'reveal';
+    upd['pub/correctText'] = q.correctText;
+    upd['pub/dist'] = dist;
+    await update(ref(db, `rooms/${code}`), upd);
+  }
+
+  async function playAgain() {
+    const upd = { answers: null, results: null, pub: { state: 'lobby', total: qs.length, createdAt: serverTimestamp() } };
+    for (const pid of Object.keys(players)) upd[`players/${pid}/score`] = 0;
+    revealedIdx = null;
+    await update(ref(db, `rooms/${code}`), upd);
+  }
+
+  async function closeRoom() {
+    if (!confirm('Закрыть комнату? Игроки будут отключены.')) return;
+    clearHost(); reset();
+    await remove(ref(db, `rooms/${code}`));
+    home();
+  }
+
+  function render() {
+    clearTimer();
+    const list = sortPlayers(players);
+    if (pub.state === 'lobby') {
+      $app.innerHTML = `<div class="wrap center">
+        <div class="hint">Код комнаты</div><div class="code">${code}</div>
+        <div class="hint">Друзья заходят по ссылке:</div><div class="link">${esc(link)}</div>
+        <button class="small secondary" id="share">Поделиться ссылкой</button>
+        <h3>Игроки (${list.length})</h3>
+        <div class="chips">${list.map(p => `<span class="chip">${esc(p.name)}</span>`).join('') || '<span class="hint">Пока никого…</span>'}</div>
+        <button class="big" id="start">Начать (${qs.length} вопр.)</button>
+        <button class="secondary" id="close">Закрыть комнату</button>
+      </div>`;
+      on('share', 'click', async () => {
+        try { if (navigator.share) await navigator.share({ title: 'Квиз', text: 'Код комнаты: ' + code, url: link }); else { await navigator.clipboard.writeText(link); alert('Ссылка скопирована'); } } catch {}
+      });
+      on('start', 'click', () => startQuestion(0));
+      on('close', 'click', closeRoom);
+    } else if (pub.state === 'question') {
+      const q = qs[pub.idx];
+      $app.innerHTML = `<div class="wrap">
+        <div class="row between"><span class="hint">Вопрос ${pub.idx + 1} из ${qs.length} · комната ${code}</span><span class="timer" id="tleft"></span></div>
+        <div class="bar"><div id="tbar"></div></div>
+        <h2 class="qtext">${esc(q.text)}</h2>
+        ${q.type === 'choice'
+          ? `<div class="opts">${q.options.map((o, j) => `<div class="opt-big l${j}"><span>${LETTERS[j]}</span><span>${esc(o)}</span></div>`).join('')}</div>`
+          : `<div class="hint center">Игроки вводят ответ текстом</div>`}
+        <div class="big-num" id="cnt"></div>
+        <button class="secondary" id="skip">Показать ответ</button>
+      </div>`;
+      updCount();
+      on('skip', 'click', reveal);
+      const tl = document.getElementById('tleft'), tb = document.getElementById('tbar');
+      const tick = () => {
+        const total = q.time * 1000;
+        const left = typeof pub.startedAt === 'number' ? Math.max(0, pub.startedAt + total - now()) : total;
+        tl.textContent = Math.ceil(left / 1000);
+        tb.style.width = (left / total * 100) + '%';
+        const pc = playerCount();
+        if (left <= 0 || (pc > 0 && answeredCount() >= pc)) reveal();
+      };
+      tick(); timerId = setInterval(tick, 250);
+    } else if (pub.state === 'reveal') {
+      const idx = pub.idx, q = qs[idx], last = idx + 1 >= qs.length, res = results[idx] || {};
+      const dist = pub.dist || [];
+      $app.innerHTML = `<div class="wrap">
+        <div class="hint">Вопрос ${idx + 1} из ${qs.length}</div>
+        <h2>${esc(q.text)}</h2>
+        <div class="correct">✓ ${esc(q.correctText)}</div>
+        ${q.type === 'choice'
+          ? q.options.map((o, j) => `<div class="dist ${j === q.correct ? 'ok' : ''}"><span class="letter l${j}">${LETTERS[j]}</span><span class="dtext">${esc(o)}</span><b>${dist[j] || 0}</b></div>`).join('')
+          : `<div class="card">${list.map(p => { const r = res[p.id]; return `<div class="row between"><span>${esc(p.name)}: ${r && r.a != null ? esc(r.a) : '<i class="hint">нет ответа</i>'}</span><span>${r && r.ok ? '✅' : '❌'}</span></div>`; }).join('') || '<span class="hint">Нет игроков</span>'}</div>`}
+        <h3>Таблица</h3>
+        ${lbHtml(list, idx, results, null)}
+        <button class="big" id="next">${last ? 'Итоги 🏆' : 'Следующий вопрос →'}</button>
+      </div>`;
+      on('next', 'click', () => last ? update(ref(db, `rooms/${code}/pub`), { state: 'final' }) : startQuestion(idx + 1));
+    } else if (pub.state === 'final') {
+      $app.innerHTML = `<div class="wrap center">
+        <h1>🏆 Итоги</h1>
+        ${list[0] ? `<h2>Победитель: ${esc(list[0].name)}!</h2>` : ''}
+        ${lbHtml(list, null, null, null, 50)}
+        <button class="big" id="again">Сыграть ещё раз</button>
+        <button class="secondary" id="close">Закрыть комнату</button>
+      </div>`;
+      on('again', 'click', playAgain);
+      on('close', 'click', closeRoom);
+    }
+  }
+}
+
+// ---------- игрок ----------
+async function join(code, name) {
+  const pub = (await get(ref(db, `rooms/${code}/pub`))).val();
+  if (!pub) throw 'Комната не найдена';
+  localStorage.setItem('qz_name', name);
+  let pid = localStorage.getItem('qz_pid_' + code);
+  if (!pid) { pid = Math.random().toString(36).slice(2, 10); localStorage.setItem('qz_pid_' + code, pid); }
+  const pref = ref(db, `rooms/${code}/players/${pid}`);
+  const ex = (await get(pref)).val();
+  if (ex) await update(pref, { name }); else await set(pref, { name, score: 0 });
+  history.replaceState(null, '', '?room=' + code);
+  player(code, pid);
+}
+
+function player(code, pid) {
+  reset();
+  let pub = null, players = {}, results = {}, myAns = null, ansIdx = null, expired = false;
+  const rank = () => sortPlayers(players).findIndex(p => p.id === pid) + 1;
+
+  sub(`rooms/${code}/players`, v => { players = v || {}; if (pub && pub.state !== 'question') render(); });
+  sub(`rooms/${code}/results`, v => { results = v || {}; if (pub && pub.state === 'reveal') render(); });
+  sub(`rooms/${code}/pub`, v => {
+    if (!v) { reset(); $app.innerHTML = `<div class="wrap center"><h2>Игра закрыта</h2><button class="big" id="h">На главную</button></div>`; on('h', 'click', home); return; }
+    const newIdx = (v.state === 'question' || v.state === 'reveal') ? v.idx : null;
+    if (newIdx !== ansIdx) {
+      ansIdx = newIdx; myAns = null; expired = false;
+      if (newIdx != null) get(ref(db, `rooms/${code}/answers/${newIdx}/${pid}`)).then(s => {
+        if (s.exists() && ansIdx === newIdx && myAns == null) { myAns = s.val().a; render(); }
+      });
+    }
+    pub = v; render();
+  });
+
+  function render() {
+    clearTimer();
+    const me = players[pid] || { name: localStorage.getItem('qz_name') || '', score: 0 };
+    if (pub.state === 'lobby') {
+      $app.innerHTML = `<div class="wrap center">
+        <div class="hint">Комната ${code}</div>
+        <h2>Привет, ${esc(me.name)}!</h2>
+        <p>Ждём, пока ведущий начнёт игру…</p>
+        <div class="hint">Игроков в комнате: ${Object.keys(players).length}</div>
+        <button class="small secondary" id="leave">Выйти</button>
+      </div>`;
+      on('leave', 'click', home);
+    } else if (pub.state === 'question') {
+      const q = pub.q, opts = q.options || [];
+      let body;
+      if (myAns != null) body = `<div class="done">Ответ принят ✓</div><div class="hint center">Ваш ответ: ${esc(q.type === 'choice' ? (opts[myAns] ?? '') : myAns)}</div>`;
+      else if (expired) body = `<div class="done">⏰ Время вышло</div>`;
+      else if (q.type === 'choice') body = `<div class="opts">${opts.map((o, j) => `<button class="opt-big l${j}" data-j="${j}"><span>${LETTERS[j]}</span><span>${esc(o)}</span></button>`).join('')}</div>`;
+      else body = `<input id="ta" autocomplete="off" autocapitalize="off" placeholder="Ваш ответ" maxlength="100"><button class="big" id="send">Отправить</button>`;
+      $app.innerHTML = `<div class="wrap">
+        <div class="row between"><span class="hint">Вопрос ${pub.idx + 1} из ${pub.total}</span><span class="timer" id="tleft"></span></div>
+        <div class="bar"><div id="tbar"></div></div>
+        <h2 class="qtext">${esc(q.text)}</h2>
+        ${body}
+      </div>`;
+      const answer = a => {
+        if (myAns != null || expired) return;
+        myAns = a;
+        set(ref(db, `rooms/${code}/answers/${pub.idx}/${pid}`), { a, ts: serverTimestamp() });
+        render();
+      };
+      document.querySelectorAll('[data-j]').forEach(b => b.addEventListener('click', () => answer(+b.dataset.j)));
+      const sendText = () => { const v = document.getElementById('ta').value.trim(); if (v) answer(v); };
+      on('send', 'click', sendText);
+      on('ta', 'keydown', e => { if (e.key === 'Enter') sendText(); });
+      const tl = document.getElementById('tleft'), tb = document.getElementById('tbar');
+      const tick = () => {
+        const total = q.time * 1000;
+        const left = typeof pub.startedAt === 'number' ? Math.max(0, pub.startedAt + total - now()) : total;
+        tl.textContent = Math.ceil(left / 1000);
+        tb.style.width = (left / total * 100) + '%';
+        if (left <= 0 && myAns == null && !expired) { expired = true; render(); }
+      };
+      tick(); timerId = setInterval(tick, 250);
+    } else if (pub.state === 'reveal') {
+      const r = results[pub.idx] && results[pub.idx][pid];
+      const n = Object.keys(players).length;
+      $app.innerHTML = `<div class="wrap center">
+        <div class="hint">Вопрос ${pub.idx + 1} из ${pub.total}</div>
+        ${r && r.ok ? `<div class="res ok">Верно! +${r.gained}</div>` : `<div class="res bad">${r && r.a != null ? 'Неверно' : 'Нет ответа'}</div>`}
+        <div class="hint">Правильный ответ</div>
+        <div class="correct">${esc(pub.correctText)}</div>
+        <h3>Ваш счёт: ${me.score || 0} · место ${rank() || '—'} из ${n}</h3>
+        <p class="hint">Ждём следующий вопрос…</p>
+      </div>`;
+    } else if (pub.state === 'final') {
+      const list = sortPlayers(players), place = rank();
+      $app.innerHTML = `<div class="wrap center">
+        <h1>${MEDALS[place - 1] || '🎉'}</h1>
+        <h2>Ваше место: ${place || '—'} из ${list.length}</h2>
+        <h3>Очки: ${me.score || 0}</h3>
+        ${lbHtml(list, null, null, pid, 10)}
+        <button class="secondary" id="leave">На главную</button>
+      </div>`;
+      on('leave', 'click', home);
+    }
+  }
+}
+
+home();
+</script>
+</body>
+</html>
