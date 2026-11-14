@@ -92,7 +92,20 @@ let unsubs = [], timerId = null;
 const clearSubs = () => { unsubs.forEach(u => u()); unsubs = []; };
 const sub = (path, cb) => unsubs.push(onValue(ref(db, path), s => cb(s.val())));
 const clearTimer = () => { if (timerId) { clearInterval(timerId); timerId = null; } };
-const reset = () => { clearSubs(); clearTimer(); };
+// ---------- экран не гаснет, пока открыт экран ведущего ----------
+let wakeWanted = false, wakeLock = null;
+const canWake = 'wakeLock' in navigator;
+const acquireWake = async () => {
+  if (!canWake || !wakeWanted || wakeLock || document.visibilityState !== 'visible') return;
+  try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch {}
+  if (!wakeWanted && wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+};
+const keepAwake = on => {
+  wakeWanted = on;
+  if (on) acquireWake(); else if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+};
+document.addEventListener('visibilitychange', acquireWake);
+const reset = () => { clearSubs(); clearTimer(); keepAwake(false); };
 const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
 const errText = e => typeof e === 'string' ? e : (e && e.message) || 'Ошибка';
 
@@ -278,6 +291,7 @@ async function createRoom(qs) {
 // ---------- ведущий ----------
 function hostGame(code, qs) {
   reset();
+  keepAwake(true);
   let pub = null, players = {}, answers = {}, results = {}, revealedIdx = null, advancedIdx = null, autoSec = loadAuto();
   const link = location.origin + location.pathname + '?room=' + code;
   const playerCount = () => Object.keys(players).length;
@@ -359,6 +373,7 @@ function hostGame(code, qs) {
         <div class="chips">${list.map(p => `<span class="chip">${esc(p.name)}</span>`).join('') || '<span class="hint">Пока никого…</span>'}</div>
         <label class="row" style="justify-content:center">Автопереход через <input id="auto" type="number" min="0" max="120" value="${autoSec}" class="num"> сек</label>
         <div class="hint">После показа ответа следующий вопрос включится сам. 0 — переключать вручную.</div>
+        <div class="hint">${canWake ? '🔆 Экран ведущего не будет гаснуть во время игры.' : '⚠️ Не давайте экрану ведущего гаснуть и не сворачивайте вкладку: без неё игра остановится.'}</div>
         <button class="big" id="start">Начать (${qs.length} вопр.)</button>
         <button class="secondary" id="close">Закрыть комнату</button>
       </div>`;
